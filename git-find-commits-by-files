@@ -5,13 +5,20 @@ import re
 import subprocess
 import sys
 
+verbose = False
+
 def main():
     if len(sys.argv) < 2:
         sys.stderr.write("Usage: %s file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0]))
         exit(1)
 
+    argument_set = set(sys.argv[1:])
+    if "-v" in argument_set:
+        verbose = True
+        argument_set.remove("-v")
+
     file_name_pattern_list = []
-    for file_name_pattern in sys.argv[1:]:
+    for file_name_pattern in argument_set:
         file_name_pattern_list.append(re.compile(file_name_pattern))
 
     git_log_command = ["git", "log", "--oneline"]
@@ -29,18 +36,25 @@ def main():
         if not file_name_list:
             continue
 
-        match = False
+        matched_file_name_list = []
         for pattern in file_name_pattern_list:
             filtered_file_name_list = filter(pattern.search, file_name_list)
             if not filtered_file_name_list:
-                match = False
+                del matched_file_name_list[:]
                 break
-            match = True
+            matched_file_name_list.extend(filtered_file_name_list)
 
-        if not match:
+        if not matched_file_name_list:
             continue
 
         print(commit)
+        if verbose:
+            for file_name in file_name_list:
+                if file_name in matched_file_name_list:
+                    print("\t\033[1m\033[91m%s\033[0m" % file_name)
+                else:
+                    print("\t%s" % file_name)
+            print("")
 
 if __name__ == "__main__":
     main()
