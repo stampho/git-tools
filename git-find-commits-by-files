@@ -5,17 +5,24 @@ import re
 import subprocess
 import sys
 
+
+PROGRESS_BAR_LEN = 60
+QUICK_SEARCH_LIMIT = 1000
+
 verbose_enabled = False
 progress_bar_enabled = False
+quick_search_enabled = False
 
-progress_bar_len = 60
 
 def parse_args():
     global verbose_enabled
     global progress_bar_enabled
+    global quick_search_enabled
+
+    usage_message = "Usage: %s [-v] [-p] [-q] file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0])
 
     if len(sys.argv) < 2:
-        sys.stderr.write("Usage: %s [-v] [-p] file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0]))
+        sys.stderr.write(usage_message)
         exit(1)
 
     argument_set = set(sys.argv[1:])
@@ -27,22 +34,59 @@ def parse_args():
         progress_bar_enabled = True
         argument_set.remove("-p")
 
+    if "-q" in argument_set:
+        quick_search_enabled = True
+        argument_set.remove("-q")
+
     if not argument_set:
-        sys.stderr.write("Usage: %s [-v] [-p] file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0]))
+        sys.stderr.write(usage_message)
         exit(1)
 
     return argument_set
 
 def print_progress(count, total):
     ratio = count / float(total)
-    fill_len = int(round(progress_bar_len * ratio))
-    bar = "%s%s" % ("#" * fill_len, "-" * (progress_bar_len - fill_len))
+    fill_len = int(round(PROGRESS_BAR_LEN * ratio))
+    bar = "%s%s" % ("#" * fill_len, "-" * (PROGRESS_BAR_LEN - fill_len))
     sys.stdout.write("[%s] %s/%s (%s%%)\r" % (bar, count, total, round(ratio * 100, 1)))
     sys.stdout.flush()
 
 def clear_progress(total):
     counter_len = len(str(total)) * 2 + 8
-    sys.stdout.write("%s\r" % (" " * (progress_bar_len + 5 + counter_len)))
+    sys.stdout.write("%s\r" % (" " * (PROGRESS_BAR_LEN + 5 + counter_len)))
+
+def quick_search_filter(file_name_pattern_list, commit_list):
+    git_ls_files_command = ["git", "ls-files"]
+    file_name_list = subprocess.check_output(git_ls_files_command).split("\n")
+
+    file_name_match_map = {}
+    for pattern in file_name_pattern_list:
+        file_name_match_list = filter(pattern.search, file_name_list)
+        if file_name_match_list:
+            file_name_match_map[pattern] = file_name_match_list
+
+    # Ignore quick search if there is no matching file name in the repository.
+    # Do not return with an empty list here since the searched file might
+    # have been removed in a commit thus without filtering the script might find it.
+    if not file_name_match_map:
+        sys.stderr.write("Ignore quick search due to pattern mismatch (file not found)\n")
+        return commit_list
+
+    file_list_to_filter = []
+    for file_name_match_list in file_name_match_map.values():
+        if not file_list_to_filter or len(file_list_to_filter) > len(file_name_match_list):
+            file_list_to_filter = file_name_match_list[:]
+
+    # Ignore quick search if too much file found for the pattern.
+    if len(file_list_to_filter) > QUICK_SEARCH_LIMIT:
+        sys.stderr.write("Ignore quick search due to reaching match count limit (%s vs %s)\n" %
+                (len(file_list_to_filter), QUICK_SEARCH_LIMIT))
+        return commit_list
+
+    git_log_command = ["git", "log", "--oneline"]
+    git_log_command.extend(file_list_to_filter)
+    commit_list = subprocess.check_output(git_log_command).split("\n")
+    return filter(None, commit_list)
 
 def main():
     argument_set = parse_args()
@@ -54,6 +98,8 @@ def main():
     git_log_command = ["git", "log", "--oneline"]
     commit_list = subprocess.check_output(git_log_command).split("\n")
     commit_list = filter(None, commit_list)
+    if quick_search_enabled and len(file_name_pattern_list) > 1:
+        commit_list = quick_search_filter(file_name_pattern_list, commit_list)
 
     for i, commit in enumerate(commit_list):
         if progress_bar_enabled:
