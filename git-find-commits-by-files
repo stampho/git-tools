@@ -5,17 +5,47 @@ import re
 import subprocess
 import sys
 
-verbose = False
+verbose_enabled = False
+progress_bar_enabled = False
 
-def main():
+progress_bar_len = 60
+
+def parse_args():
+    global verbose_enabled
+    global progress_bar_enabled
+
     if len(sys.argv) < 2:
-        sys.stderr.write("Usage: %s file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0]))
+        sys.stderr.write("Usage: %s [-v] [-p] file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0]))
         exit(1)
 
     argument_set = set(sys.argv[1:])
     if "-v" in argument_set:
-        verbose = True
+        verbose_enabled = True
         argument_set.remove("-v")
+
+    if "-p" in argument_set:
+        progress_bar_enabled = True
+        argument_set.remove("-p")
+
+    if not argument_set:
+        sys.stderr.write("Usage: %s [-v] [-p] file_name_pattern1 file_name_pattern2 ...\n" % os.path.basename(sys.argv[0]))
+        exit(1)
+
+    return argument_set
+
+def print_progress(count, total):
+    ratio = count / float(total)
+    fill_len = int(round(progress_bar_len * ratio))
+    bar = "%s%s" % ("#" * fill_len, "-" * (progress_bar_len - fill_len))
+    sys.stdout.write("[%s] %s/%s (%s%%)\r" % (bar, count, total, round(ratio * 100, 1)))
+    sys.stdout.flush()
+
+def clear_progress(total):
+    counter_len = len(str(total)) * 2 + 8
+    sys.stdout.write("%s\r" % (" " * (progress_bar_len + 5 + counter_len)))
+
+def main():
+    argument_set = parse_args()
 
     file_name_pattern_list = []
     for file_name_pattern in argument_set:
@@ -25,7 +55,10 @@ def main():
     commit_list = subprocess.check_output(git_log_command).split("\n")
     commit_list = filter(None, commit_list)
 
-    for commit in commit_list:
+    for i, commit in enumerate(commit_list):
+        if progress_bar_enabled:
+            print_progress(i, len(commit_list))
+
         hash = commit.split(" ")[0]
 
         git_diff_tree_command = ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", hash]
@@ -34,6 +67,8 @@ def main():
 
         # Possibly Merge commit
         if not file_name_list:
+            if progress_bar_enabled and i + 1 == len(commit_list):
+                clear_progress(len(commit_list))
             continue
 
         matched_file_name_list = []
@@ -45,10 +80,15 @@ def main():
             matched_file_name_list.extend(filtered_file_name_list)
 
         if not matched_file_name_list:
+            if progress_bar_enabled and i + 1 == len(commit_list):
+                clear_progress(len(commit_list))
             continue
 
-        print(commit)
-        if verbose:
+        if progress_bar_enabled:
+            clear_progress(len(commit_list))
+        sys.stdout.write("%s\n" % commit)
+
+        if verbose_enabled:
             for file_name in file_name_list:
                 if file_name in matched_file_name_list:
                     print("\t\033[1m\033[91m%s\033[0m" % file_name)
